@@ -9,6 +9,9 @@ import wandb
 from datasets import load_dataset
 from transformers import AutoTokenizer, GenerationConfig, Qwen3_5ForCausalLM
 
+from pathlib import Path
+from peft import PeftModel
+
 
 MODEL_ID = "Qwen/Qwen3.5-0.8B"
 MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
@@ -40,7 +43,10 @@ def final_number(text):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, choices=(10, VALIDATION_SIZE), default=10)
+    parser.add_argument("--adapter", type=Path)
     args = parser.parse_args()
+    if args.adapter and not (args.adapter / "adapter_config.json").is_file():
+        parser.error(f"{args.adapter} に adapter_config.json がありません")
 
     train = load_dataset(DATASET_ID, "main", split="train", revision=DATASET_REVISION)
     # trainの行番号を100個選んで検証用に確保する。
@@ -55,6 +61,8 @@ def main():
     model = Qwen3_5ForCausalLM.from_pretrained(
         MODEL_ID, revision=MODEL_REVISION, dtype=dtype, attn_implementation="sdpa"
     ).to(device)
+    if args.adapter:
+        model = PeftModel.from_pretrained(model, args.adapter)    
     model.eval()
 
     generation = GenerationConfig(
@@ -78,13 +86,14 @@ def main():
         "max_new_tokens": generation.max_new_tokens,
         "device": device,
         "dtype": str(dtype),
+        "adapter": str(args.adapter) if args.adapter else None,
     }
 
     with wandb.init(
         entity=ENTITY,
         project="geniac-practice",
-        job_type="baseline-eval",
-        name=f"gsm8k-baseline-{args.limit}",
+        job_type="adapter-eval" if args.adapter else "baseline-eval",
+        name=f"gsm8k-{args.adapter.name if args.adapter else 'baseline'}-{args.limit}",
         config=config,
     ) as run:
         predictions = wandb.Table(columns=[
